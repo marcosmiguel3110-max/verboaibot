@@ -65,14 +65,52 @@ Si lo dejaste vacío, se registran globalmente y pueden tardar hasta ~1 hora en 
 - `/olvidame` → borra todo lo que el bot recordaba sobre vos.
 - `/creditos` → muestra los créditos restantes del token de Verbo AI.
 
-## 6. Notas importantes
+## 6. Despliegue en Fly.io (24/7 gratis)
+
+Para desplegar el bot en Fly.io con persistencia en MongoDB:
+
+1. **Instalar Fly CLI:**
+   ```bash
+   # En Windows con Chocolatey:
+   choco install flyctl
+   ```
+
+2. **Iniciar sesión en Fly.io:**
+   ```bash
+   flyctl auth signup
+   flyctl auth login
+   ```
+
+3. **Crear la aplicación:**
+   ```bash
+   flyctl launch
+   ```
+   - Nombre: `verboaibot`
+   - Región: `iad` (Virginia) o la más cercana a tu comunidad
+
+4. **Configurar variables de entorno:**
+   ```bash
+   flyctl secrets set DISCORD_TOKEN=tu_token_aqui
+   flyctl secrets set VERBOAI_TOKEN=tu_verboai_token_aqui
+   flyctl secrets set VERBOAI_URL=https://verboai.duckdns.org
+   flyctl secrets set MONGODB_URI=mongodb+srv://mmodcat_db_user:<password>@cluster0.sz5kbsv.mongodb.net/?appName=Cluster0
+   ```
+
+5. **Desplegar:**
+   ```bash
+   flyctl deploy
+   ```
+
+El bot se ejecutará 24/7 en el plan gratuito de Fly.io con persistencia en MongoDB.
+
+## 7. Notas importantes
 
 - **Rate limits de la API**: `NewserLite` permite 20 pedidos/min, `NewserAdvanced1.5` solo 3 pedidos/min y hasta 2 imágenes/hora. Si mucha gente escribe a la vez en un canal activado, puede aparecer el mensaje de "muchos mensajes seguidos" — es normal, es el límite del token, no un bug del bot.
 - El filtro de contenido explícito es una primera barrera por palabras clave; la propia IA (Verbo AI) también tiene la instrucción de rechazar ese tipo de pedidos, pero ningún filtro de este tipo es 100% infalible.
-- La memoria se guarda en `data/memory.json` y los canales activos en `data/channels.json` — son archivos locales, si movés el bot a otro servidor/hosting llevate esa carpeta si querés conservar la memoria.
-- Si en algún momento cambian el dominio o los endpoints de Verbo AI, solo hay que actualizar `VERBOAI_URL` en el `.env`.
+- **Persistencia**: El bot ahora usa MongoDB para guardar la memoria de usuarios y canales activos, lo que permite despliegues en la nube sin perder datos al reiniciar.
+- Si en algún momento cambian el dominio o los endpoints de Verbo AI, solo hay que actualizar `VERBOAI_URL` en las variables de entorno.
 
-## 7. Estructura del proyecto
+## 8. Estructura del proyecto
 
 ```
 verboai-discord-bot/
@@ -81,7 +119,8 @@ verboai-discord-bot/
 ├── verboai.js           # Cliente de la API de Verbo AI
 ├── persona.js           # Personalidad del bot + filtro básico de contenido
 ├── store.js             # Memoria persistente (canales activos, historial, datos)
-├── data/                # channels.json y memory.json (se crean solos)
+├── data/                # (ya no se usa, ahora MongoDB)
 ├── .env.example
+├── fly.toml             # Configuración para Fly.io
 └── package.json
 ```

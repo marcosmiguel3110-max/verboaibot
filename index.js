@@ -14,11 +14,13 @@ const {
 const { preguntarVerboAI, esPedidoDeImagen } = require('./verboai');
 const { construirMensaje, contieneContenidoProhibido, RESPUESTA_RECHAZO } = require('./persona');
 const {
+  connectToMongo,
   getActiveChannels,
   setActiveChannels,
   isChannelActive,
   addExchange,
   addFact,
+  deleteUserMemory,
 } = require('./store');
 
 const MODELO_TEXTO = 'NewserLite';
@@ -34,8 +36,9 @@ const client = new Client({
   partials: [Partials.Channel],
 });
 
-client.once('clientReady', () => {
+client.once('clientReady', async () => {
   console.log(`🤖 Conectado como ${client.user.tag}`);
+  await connectToMongo();
 });
 
 // ------------------------------------------------------------------
@@ -63,7 +66,7 @@ async function manejarSlashCommand(interaction) {
   const { commandName } = interaction;
 
   if (commandName === 'channelai') {
-    const actuales = getActiveChannels(interaction.guildId);
+    const actuales = await getActiveChannels(interaction.guildId);
     const select = new ChannelSelectMenuBuilder()
       .setCustomId('channelai_select')
       .setPlaceholder('Elegí los canales donde Verbo Bot va a hablar')
@@ -90,7 +93,7 @@ async function manejarSlashCommand(interaction) {
       await interaction.reply({ content: RESPUESTA_RECHAZO, ephemeral: true });
       return;
     }
-    addFact(interaction.user.id, interaction.user.displayName || interaction.user.username, dato);
+    await addFact(interaction.user.id, interaction.user.displayName || interaction.user.username, dato);
     await interaction.reply({
       content: `✅ Listo, voy a recordar esto: _"${dato}"_`,
       ephemeral: true,
@@ -99,16 +102,7 @@ async function manejarSlashCommand(interaction) {
   }
 
   if (commandName === 'olvidame') {
-    const fs = require('fs');
-    const path = require('path');
-    const memPath = path.join(__dirname, 'data', 'memory.json');
-    try {
-      const data = JSON.parse(fs.readFileSync(memPath, 'utf8'));
-      delete data[interaction.user.id];
-      fs.writeFileSync(memPath, JSON.stringify(data, null, 2));
-    } catch {
-      /* si no existe el archivo, no hay nada que borrar */
-    }
+    await deleteUserMemory(interaction.user.id);
     await interaction.reply({ content: '🧹 Listo, borré todo lo que recordaba sobre vos.', ephemeral: true });
     return;
   }
@@ -178,7 +172,7 @@ client.on('messageCreate', async (message) => {
     // "Recuerda que..." dicho directamente en el chat también guarda un dato.
     const matchRecuerda = texto.match(/^recorda(?:me)?\s+que\s+(.+)/i) || texto.match(/^recuerda(?:me)?\s+que\s+(.+)/i);
     if (matchRecuerda) {
-      addFact(message.author.id, nombreUsuario, matchRecuerda[1].trim());
+      await addFact(message.author.id, nombreUsuario, matchRecuerda[1].trim());
     }
 
     const esImagen = esPedidoDeImagen(texto);
@@ -187,7 +181,7 @@ client.on('messageCreate', async (message) => {
 
     const data = await preguntarVerboAI(mensajeCompleto, modelo);
 
-    addExchange(message.author.id, nombreUsuario, texto, data.respuesta);
+    await addExchange(message.author.id, nombreUsuario, texto, data.respuesta);
 
     if (data.imagen && data.imagen.url) {
       const urlImagen = `${VERBOAI_URL}${data.imagen.url}`;

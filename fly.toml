@@ -1,0 +1,20 @@
+app = "verboaibot"
+primary_region = "iad"
+
+[build]
+  builder = "heroku/builder:22"
+  buildpacks = ["heroku/nodejs"]
+
+[env]
+  NODE_ENV = "production"
+
+[processes]
+  app = "node index.js"
+
+[[services]]
+  internal_port = 8080
+  protocol = "tcp"
+
+[experimental]
+  allowed_public_ports = []
+  auto_rollback = true

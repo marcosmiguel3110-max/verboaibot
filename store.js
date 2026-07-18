@@ -1,100 +1,166 @@
 'use strict';
 
-const fs = require('fs');
-const path = require('path');
-
-const DATA_DIR = path.join(__dirname, 'data');
-const CHANNELS_FILE = path.join(DATA_DIR, 'channels.json');
-const MEMORY_FILE = path.join(DATA_DIR, 'memory.json');
+const mongoose = require('mongoose');
 
 const HISTORY_MAX_TURNOS = 6; // cuántos intercambios recientes recordamos por usuario
 const FACTS_MAX = 20; // cuántos "datos aprendidos" guardamos por usuario
 
-function ensureFile(file, defaultValue) {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  if (!fs.existsSync(file)) {
-    fs.writeFileSync(file, JSON.stringify(defaultValue, null, 2));
-  }
-}
+// ---------- MongoDB Schemas ----------
 
-function readJSON(file, defaultValue) {
-  ensureFile(file, defaultValue);
+const GuildSchema = new mongoose.Schema({
+  guildId: { type: String, required: true, unique: true },
+  channels: [{ type: String }],
+});
+
+const UserMemorySchema = new mongoose.Schema({
+  userId: { type: String, required: true, unique: true },
+  nombre: String,
+  historial: [{
+    usuario: String,
+    ia: String,
+  }],
+  datos: [String],
+});
+
+const Guild = mongoose.model('Guild', GuildSchema);
+const UserMemory = mongoose.model('UserMemory', UserMemorySchema);
+
+// ---------- Conexión a MongoDB ----------
+
+let isConnected = false;
+
+async function connectToMongo() {
+  if (isConnected) return;
+  
+  const mongoUrl = process.env.MONGODB_URI;
+  if (!mongoUrl) {
+    console.warn('⚠️ MONGODB_URI no está definido. Usando modo sin persistencia.');
+    return;
+  }
+
   try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch {
-    return defaultValue;
+    await mongoose.connect(mongoUrl);
+    isConnected = true;
+    console.log('✅ Conectado a MongoDB');
+  } catch (err) {
+    console.error('❌ Error conectando a MongoDB:', err);
   }
-}
-
-function writeJSON(file, data) {
-  fs.writeFileSync(file, JSON.stringify(data, null, 2));
 }
 
 // ---------- Canales activos por servidor ----------
-// estructura: { "<guildId>": ["<channelId>", ...] }
 
-function getChannelsData() {
-  return readJSON(CHANNELS_FILE, {});
+async function getActiveChannels(guildId) {
+  if (!isConnected) return [];
+  
+  try {
+    const guild = await Guild.findOne({ guildId });
+    return guild ? guild.channels : [];
+  } catch (err) {
+    console.error('Error obteniendo canales:', err);
+    return [];
+  }
 }
 
-function getActiveChannels(guildId) {
-  const data = getChannelsData();
-  return data[guildId] || [];
+async function setActiveChannels(guildId, channelIds) {
+  if (!isConnected) return;
+  
+  try {
+    await Guild.findOneAndUpdate(
+      { guildId },
+      { channels: channelIds },
+      { upsert: true, new: true }
+    );
+  } catch (err) {
+    console.error('Error guardando canales:', err);
+  }
 }
 
-function setActiveChannels(guildId, channelIds) {
-  const data = getChannelsData();
-  data[guildId] = channelIds;
-  writeJSON(CHANNELS_FILE, data);
-}
-
-function isChannelActive(guildId, channelId) {
-  return getActiveChannels(guildId).includes(channelId);
+async function isChannelActive(guildId, channelId) {
+  const channels = await getActiveChannels(guildId);
+  return channels.includes(channelId);
 }
 
 // ---------- Memoria por usuario ----------
-// estructura: { "<userId>": { nombre, historial: [{rol, texto}], datos: ["dato1", ...] } }
 
-function getMemoryData() {
-  return readJSON(MEMORY_FILE, {});
-}
-
-function saveMemoryData(data) {
-  writeJSON(MEMORY_FILE, data);
-}
-
-function getUserMemory(userId) {
-  const data = getMemoryData();
-  return data[userId] || { historial: [], datos: [] };
-}
-
-function addExchange(userId, nombre, preguntaUsuario, respuestaIA) {
-  const data = getMemoryData();
-  if (!data[userId]) data[userId] = { historial: [], datos: [] };
-  data[userId].nombre = nombre;
-  data[userId].historial.push({ usuario: preguntaUsuario, ia: respuestaIA });
-  if (data[userId].historial.length > HISTORY_MAX_TURNOS) {
-    data[userId].historial = data[userId].historial.slice(-HISTORY_MAX_TURNOS);
+async function getUserMemory(userId) {
+  if (!isConnected) return { historial: [], datos: [] };
+  
+  try {
+    const memory = await UserMemory.findOne({ userId });
+    return memory ? { historial: memory.historial, datos: memory.datos } : { historial: [], datos: [] };
+  } catch (err) {
+    console.error('Error obteniendo memoria:', err);
+    return { historial: [], datos: [] };
   }
-  saveMemoryData(data);
 }
 
-function addFact(userId, nombre, dato) {
-  const data = getMemoryData();
-  if (!data[userId]) data[userId] = { historial: [], datos: [] };
-  data[userId].nombre = nombre;
-  data[userId].datos.push(dato);
-  if (data[userId].datos.length > FACTS_MAX) {
-    data[userId].datos = data[userId].datos.slice(-FACTS_MAX);
+async function addExchange(userId, nombre, preguntaUsuario, respuestaIA) {
+  if (!isConnected) return;
+  
+  try {
+    const memory = await UserMemory.findOneAndUpdate(
+      { userId },
+      {
+        nombre,
+        $push: {
+          historial: { usuario: preguntaUsuario, ia: respuestaIA }
+        }
+      },
+      { upsert: true, new: true }
+    );
+    
+    // Mantener solo los últimos HISTORY_MAX_TURNOS
+    if (memory.historial.length > HISTORY_MAX_TURNOS) {
+      memory.historial = memory.historial.slice(-HISTORY_MAX_TURNOS);
+      await memory.save();
+    }
+  } catch (err) {
+    console.error('Error guardando intercambio:', err);
   }
-  saveMemoryData(data);
+}
+
+async function addFact(userId, nombre, dato) {
+  if (!isConnected) return;
+  
+  try {
+    const memory = await UserMemory.findOneAndUpdate(
+      { userId },
+      {
+        nombre,
+        $push: {
+          datos: dato
+        }
+      },
+      { upsert: true, new: true }
+    );
+    
+    // Mantener solo los últimos FACTS_MAX
+    if (memory.datos.length > FACTS_MAX) {
+      memory.datos = memory.datos.slice(-FACTS_MAX);
+      await memory.save();
+    }
+  } catch (err) {
+    console.error('Error guardando dato:', err);
+  }
+}
+
+async function deleteUserMemory(userId) {
+  if (!isConnected) return;
+  
+  try {
+    await UserMemory.deleteOne({ userId });
+  } catch (err) {
+    console.error('Error borrando memoria:', err);
+  }
 }
 
 module.exports = {
+  connectToMongo,
   getActiveChannels,
   setActiveChannels,
   isChannelActive,
   getUserMemory,
   addExchange,
   addFact,
+  deleteUserMemory,
 };
